@@ -20,6 +20,9 @@
     align-items: center;
     gap: 16px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    position: sticky;
+    top: 0;
+    z-index: 100;
   }
   header h1 {
     font-size: 22px;
@@ -40,7 +43,7 @@
     margin-left: auto;
   }
   .container {
-    max-width: 1200px;
+    max-width: 100%;
     margin: 0 auto;
     padding: 32px 24px;
   }
@@ -69,9 +72,51 @@
   }
   .section-body {
     padding: 24px;
+    overflow: auto;
+    position: relative;
+  }
+  .diagram-wrapper {
+    min-width: 1400px;
     display: flex;
     justify-content: center;
-    overflow-x: auto;
+  }
+  .diagram-wrapper-sm {
+    min-width: 900px;
+    display: flex;
+    justify-content: center;
+  }
+  .zoom-controls {
+    position: sticky;
+    left: 0;
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    z-index: 10;
+  }
+  .zoom-controls button {
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 14px;
+    cursor: pointer;
+    color: #475569;
+    transition: all 0.15s;
+  }
+  .zoom-controls button:hover {
+    background: #e2e8f0;
+    color: #1e293b;
+  }
+  .zoom-controls button.active {
+    background: #3b82f6;
+    color: #fff;
+    border-color: #3b82f6;
+  }
+  .zoom-controls span {
+    font-size: 13px;
+    color: #94a3b8;
+    align-self: center;
+    margin-left: 8px;
   }
   .legend {
     display: grid;
@@ -96,6 +141,9 @@
     padding: 24px;
     color: #94a3b8;
     font-size: 13px;
+  }
+  .mermaid svg {
+    max-width: none !important;
   }
 </style>
 </head>
@@ -132,8 +180,17 @@
       execute_run 主流程
     </div>
     <div class="section-body">
-      <div class="mermaid">
-%%{init: {'theme': 'base', 'themeVariables': {'primaryColor':'#dbeafe','primaryTextColor':'#1e293b','primaryBorderColor':'#93c5fd','lineColor':'#64748b','secondaryColor':'#f1f5f9','tertiaryColor':'#fff','background':'#ffffff','fontSize':'14px'}}}%%
+      <div class="zoom-controls">
+        <button onclick="setZoom('main', 0.75)">75%</button>
+        <button onclick="setZoom('main', 1)" class="active">100%</button>
+        <button onclick="setZoom('main', 1.5)">150%</button>
+        <button onclick="setZoom('main', 2)">200%</button>
+        <span>← 可横向滚动查看完整流程图</span>
+      </div>
+      <div id="main-scroll" style="overflow:auto;max-height:80vh;">
+        <div id="main-diagram" class="diagram-wrapper">
+          <div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor':'#dbeafe','primaryTextColor':'#1e293b','primaryBorderColor':'#93c5fd','lineColor':'#64748b','secondaryColor':'#f1f5f9','tertiaryColor':'#fff','background':'#ffffff','fontSize':'15px','nodeTextSize':'15px'}}}%%
 flowchart TD
     START(["▶ 开始执行 execute_run"]):::startEnd --> INIT["state = Running\n加载 Workflow 定义\ncurrent_input = user_input\nvariables = { }"]:::process
     INIT --> LOOP{"i &lt; steps.len() ?"}:::decision
@@ -143,7 +200,6 @@ flowchart TD
 
     LOOP -->|"是"| CHECK_MODE{"step.mode ?"}:::decision
 
-    %% ─── Sequential ───
     CHECK_MODE -->|Sequential| SEQ_RESOLVE["解析 agent (ById / ByName)\n展开模板变量\n{{input}} → current_input\n{{var}} → variables[var]"]:::process
     SEQ_RESOLVE --> SEQ_EXEC["execute_step_with_error_mode\n(含 timeout 控制)"]:::process
     SEQ_EXEC --> SEQ_RESULT{"执行结果"}:::decision
@@ -153,7 +209,6 @@ flowchart TD
     SEQ_OK --> NEXT
     FAIL --> FAIL_END(["✘ 返回 Err(error)"]):::failEnd
 
-    %% ─── FanOut ───
     CHECK_MODE -->|FanOut| FAN_COLLECT["向后扫描收集连续的\nFanOut 步骤 → fan_out_steps"]:::fanout
     FAN_COLLECT --> FAN_BUILD["为每个步骤:\n· 解析 agent\n· 展开模板\n· 构建 Future + timeout"]:::fanout
     FAN_BUILD --> FAN_EXEC["futures::join_all\n并行执行所有 Future"]:::fanout
@@ -163,11 +218,9 @@ flowchart TD
     FAN_OK --> FAN_SKIP["i = j\n(跳过已处理的步骤)"]:::process
     FAN_SKIP --> LOOP
 
-    %% ─── Collect ───
     CHECK_MODE -->|Collect| COLL["current_input =\nall_outputs.join(---)\n清空 all_outputs"]:::process
     COLL --> NEXT
 
-    %% ─── Conditional ───
     CHECK_MODE -->|Conditional| COND_CHECK{"current_input\n包含 condition ?"}:::decision
     COND_CHECK -->|"否 — 条件不满足"| COND_SKIP["跳过此步骤"]:::process
     COND_SKIP --> NEXT
@@ -177,7 +230,6 @@ flowchart TD
     COND_RESULT -->|"Ok(None)"| NEXT
     COND_RESULT -->|"Err"| FAIL
 
-    %% ─── Loop ───
     CHECK_MODE -->|Loop| LOOP_INIT["解析 agent\niter = 0"]:::loopNode
     LOOP_INIT --> LOOP_ITER{"iter &lt; max_iterations ?"}:::decision
     LOOP_ITER -->|否 — 达到上限| LOOP_DONE["保存 output_var\n记录 all_outputs"]:::loopNode
@@ -193,13 +245,15 @@ flowchart TD
 
     NEXT --> LOOP
 
-    classDef startEnd fill:#d1fae5,stroke:#6ee7b7,stroke-width:2px,color:#065f46
-    classDef process fill:#dbeafe,stroke:#93c5fd,stroke-width:1px,color:#1e40af
-    classDef decision fill:#fef3c7,stroke:#fcd34d,stroke-width:1px,color:#92400e
-    classDef failNode fill:#fecaca,stroke:#f87171,stroke-width:2px,color:#991b1b
-    classDef failEnd fill:#fecaca,stroke:#f87171,stroke-width:2px,color:#991b1b
-    classDef fanout fill:#e0e7ff,stroke:#a5b4fc,stroke-width:1px,color:#3730a3
-    classDef loopNode fill:#f3e8ff,stroke:#c084fc,stroke-width:1px,color:#6b21a8
+    classDef startEnd fill:#d1fae5,stroke:#6ee7b7,stroke-width:2px,color:#065f46,font-size:15px
+    classDef process fill:#dbeafe,stroke:#93c5fd,stroke-width:1px,color:#1e40af,font-size:15px
+    classDef decision fill:#fef3c7,stroke:#fcd34d,stroke-width:1px,color:#92400e,font-size:15px
+    classDef failNode fill:#fecaca,stroke:#f87171,stroke-width:2px,color:#991b1b,font-size:15px
+    classDef failEnd fill:#fecaca,stroke:#f87171,stroke-width:2px,color:#991b1b,font-size:15px
+    classDef fanout fill:#e0e7ff,stroke:#a5b4fc,stroke-width:1px,color:#3730a3,font-size:15px
+    classDef loopNode fill:#f3e8ff,stroke:#c084fc,stroke-width:1px,color:#6b21a8,font-size:15px
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -211,8 +265,16 @@ flowchart TD
       execute_step_with_error_mode 错误处理流程
     </div>
     <div class="section-body">
-      <div class="mermaid">
-%%{init: {'theme': 'base', 'themeVariables': {'primaryColor':'#dbeafe','primaryTextColor':'#1e293b','primaryBorderColor':'#93c5fd','lineColor':'#64748b','secondaryColor':'#f1f5f9','tertiaryColor':'#fff','background':'#ffffff','fontSize':'14px'}}}%%
+      <div class="zoom-controls">
+        <button onclick="setZoom('error', 0.75)">75%</button>
+        <button onclick="setZoom('error', 1)" class="active">100%</button>
+        <button onclick="setZoom('error', 1.5)">150%</button>
+        <button onclick="setZoom('error', 2)">200%</button>
+      </div>
+      <div id="error-scroll" style="overflow:auto;max-height:70vh;">
+        <div id="error-diagram" class="diagram-wrapper-sm">
+          <div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor':'#dbeafe','primaryTextColor':'#1e293b','primaryBorderColor':'#93c5fd','lineColor':'#64748b','secondaryColor':'#f1f5f9','tertiaryColor':'#fff','background':'#ffffff','fontSize':'15px'}}}%%
 flowchart TD
     START(["步骤执行入口"]):::startEnd --> MODE{"error_mode ?"}:::decision
 
@@ -235,11 +297,13 @@ flowchart TD
     R_WARN --> R_EXEC
     R_RETRY -->|"否 — 重试耗尽"| R_ERR(["返回 Err(重试耗尽)"]):::failEnd
 
-    classDef startEnd fill:#d1fae5,stroke:#6ee7b7,stroke-width:2px,color:#065f46
-    classDef process fill:#dbeafe,stroke:#93c5fd,stroke-width:1px,color:#1e40af
-    classDef decision fill:#fef3c7,stroke:#fcd34d,stroke-width:1px,color:#92400e
-    classDef failEnd fill:#fecaca,stroke:#f87171,stroke-width:2px,color:#991b1b
-    classDef skipEnd fill:#fef9c3,stroke:#facc15,stroke-width:2px,color:#854d0e
+    classDef startEnd fill:#d1fae5,stroke:#6ee7b7,stroke-width:2px,color:#065f46,font-size:15px
+    classDef process fill:#dbeafe,stroke:#93c5fd,stroke-width:1px,color:#1e40af,font-size:15px
+    classDef decision fill:#fef3c7,stroke:#fcd34d,stroke-width:1px,color:#92400e,font-size:15px
+    classDef failEnd fill:#fecaca,stroke:#f87171,stroke-width:2px,color:#991b1b,font-size:15px
+    classDef skipEnd fill:#fef9c3,stroke:#facc15,stroke-width:2px,color:#854d0e,font-size:15px
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -301,11 +365,27 @@ flowchart TD
     startOnLoad: true,
     securityLevel: 'loose',
     flowchart: {
-      useMaxWidth: true,
+      useMaxWidth: false,
       htmlLabels: true,
-      curve: 'basis'
+      curve: 'basis',
+      nodeSpacing: 30,
+      rankSpacing: 50,
+      padding: 20
     }
   });
+
+  function setZoom(chart, scale) {
+    var diagram = document.getElementById(chart + '-diagram');
+    diagram.style.transform = 'scale(' + scale + ')';
+    diagram.style.transformOrigin = 'top left';
+
+    var wrapper = diagram.parentElement;
+    wrapper.style.height = (diagram.scrollHeight * scale) + 'px';
+
+    var buttons = diagram.closest('.section-body').querySelectorAll('.zoom-controls button');
+    buttons.forEach(function(btn) { btn.classList.remove('active'); });
+    event.target.classList.add('active');
+  }
 </script>
 </body>
 </html>

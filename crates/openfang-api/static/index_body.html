@@ -1717,7 +1717,7 @@
                   <div class="form-group">
                     <label>Target Agent</label>
                     <select class="form-select" x-model="newJob.agent_id">
-                      <option value="">Any available agent</option>
+                      <option value="">Any available agent (auto-select first)</option>
                       <template x-for="a in availableAgents" :key="a.id">
                         <option :value="a.id" x-text="a.name + ' (' + (a.model_provider || 'unknown') + ':' + (a.model_name || 'unknown') + ')'"></option>
                       </template>

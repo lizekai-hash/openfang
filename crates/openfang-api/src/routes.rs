@@ -9485,8 +9485,22 @@ pub async fn create_cron_job(
     State(state): State<Arc<AppState>>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let agent_id = body["agent_id"].as_str().unwrap_or("");
-    match state.kernel.cron_create(agent_id, body.clone()).await {
+    let mut agent_id = body["agent_id"].as_str().unwrap_or("").to_string();
+
+    // "Any available agent" sends empty agent_id — pick the first running agent
+    if agent_id.is_empty() {
+        let agents = state.kernel.registry.list();
+        if let Some(first) = agents.first() {
+            agent_id = first.id.to_string();
+        } else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "No agents available. Spawn an agent first."})),
+            );
+        }
+    }
+
+    match state.kernel.cron_create(&agent_id, body.clone()).await {
         Ok(result) => (
             StatusCode::CREATED,
             Json(serde_json::json!({"result": result})),
